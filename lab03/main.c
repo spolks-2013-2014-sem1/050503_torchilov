@@ -1,10 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <netdb.h>
 
-void print_error(char* message, int error_code) {
-    fprintf(stderr, message);
-    exit(error_code);
-}
+
+void send_file(char* host, int port, int file_path);
+void print_error(char* message, int error_code);
+
+int client_socket_descriptor = -1;
+int server_socket_descriptor = -1;
 
 int main(int argc, char* argv[])
 {
@@ -16,3 +24,56 @@ int main(int argc, char* argv[])
 
     return 0;
 }
+
+void send_file(char* host, int port, int file_path) {
+    struct sockaddr_in server_socket;
+
+    memset(&server_socket, 0, sizeof(server_socket));
+    server_socket.sin_family = AF_INET;
+
+    struct hostent* host_name = gethostbyname(host);
+
+    if (host_name != NULL) {
+        memcpy(&server_socket.sin_addr, host_name->h_addr, host_name->h_length);
+    } else {
+        print_error("Invalid host", 2);
+    }
+
+    server_socket.sin_port = htons(port);
+
+    struct protoent* protocol_type = getprotobyname("TCP");
+    client_socket_descriptor = socket(PF_INET, SOCK_STREAM, protocol_type->p_proto);
+
+    if (client_socket_descriptor < 0) {
+        print_error("Can't create socket", 3);
+    }
+
+    if (connect(client_socket_descriptor, (struct sockaddr*) server_socket,
+                sizeof(server_socket)) < 0) {
+        print_error("Error in connect", 4);
+    }
+
+    FILE *file = fopen(file_path, "r+");
+
+    if (file == NULL) {
+        print_error("Can't open file in r+ mode", 5);
+    }
+}
+
+void print_error(char* message, int error_code) {
+    fprintf(stderr, message);
+    exit(error_code);
+}
+
+long get_file_size(FILE* file) {
+    long current_position = ftell(file);
+
+    fseek(file, 0L, SEEK_END);
+
+    long full_size = ftell(file);
+
+    fseek(file, pos, SEEK_SET);
+
+    return full_size;
+}
+
