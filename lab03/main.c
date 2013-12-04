@@ -70,8 +70,25 @@ void send_file(char* host, int port, char* file_path) {
         print_error("Send header error", 6);
     }
 
+    char buffer[BUFFER_SIZE];
+    long number_of_send_bytes = 0;
+    size_t number_of_read_bytes;
 
+    while (number_of_send_bytes < file_size) {
+        number_of_read_bytes = fread(buffer, 1, sizeof(buffer), file);
 
+        int temp_send = send(client_socket_descriptor, buffer, number_of_read_bytes, 0);
+
+        if (temp_send < 0) {
+            print_error("Error while sending file", 7);
+        }
+        number_of_send_bytes += temp_send;
+    }
+
+    printf("Sending finished\n");
+
+    close(client_socket_descriptor);
+    fclose(file);
 }
 
 void print_error(char* message, int error_code) {
@@ -90,4 +107,3 @@ long get_file_size(FILE* file) {
 
     return full_size;
 }
-
