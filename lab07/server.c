@@ -2,9 +2,6 @@
 extern "C" {
 #endif
 
-#include "../spolks_lib/utils.c"
-#include "../spolks_lib/sockets.c"
-
 #include <sys/types.h>
 #include <signal.h>
 #include <sys/stat.h>
@@ -18,6 +15,8 @@ extern "C" {
 #include <libgen.h>
 #include <errno.h>
 #include <pthread.h>
+#include <stdarg.h>
+#include <stdint.h>
 
 #ifdef __cplusplus 
 }
@@ -35,19 +34,23 @@ extern "C" {
 
 using namespace std;
 
-void receiveFileTCP(char *serverName, unsigned int port);
-void receiveFileUDP(char *serverName, unsigned int port);
+void get_file_tcp(char *serverName, unsigned int port);
+void get_file_udp(char *serverName, unsigned int port);
 
-void *TCP_Processing_thread(void *ptr);
-void *UDP_Processing_thread(void *ptr);
+void *tcp_processing_thread(void *ptr);
+void *udp_processing_thread(void *ptr);
 
 void print_error(char* message, int error_code);
 FILE *create_file(char *file_name, const char *folder_name);
+char *get_file_size_pointer(char *str, int size);
+uint64_t ip_port_to_number(uint32_t IPv4, uint16_t port);
+void safe_print(pthread_mutex_t* mutex, const char* message, ...);
+int receive_to_buf(int descriptor, char *buf, int len);
 
 int server_socket_descriptor = -1;
 pthread_mutex_t printMutex;
 
-void intHandler(int signo)
+void interrupt(int signo)
 {
     if (server_socket_descriptor != -1)
         close(server_socket_descriptor);
@@ -58,28 +61,23 @@ void intHandler(int signo)
 int main(int argc, char *argv[])
 {
     if (argc < 3 || argc > 4) {
-        fprintf(stderr, "usage: main <host> <port> [-u]\n");
+        fprintf(stderr, "usage: main [-u] <host> <port>\n");
         return 1;
     }
-    // Change SIGINT action
-    struct sigaction intSignal;
-    intSignal.sa_handler = intHandler;
-    sigaction(SIGINT, &intSignal, NULL);
+
+    struct sigaction signal;
+    signal.sa_handler = interrupt;
+    sigaction(SIGINT, &signal, NULL);
 
     if (argc == 3)
-        receiveFileTCP(argv[1], atoi(argv[2]));
+        get_file_tcp(argv[1], atoi(argv[2]));
     else
-        receiveFileUDP(argv[1], atoi(argv[2]));
+        get_file_udp(argv[2], atoi(argv[3]));
 
     return 0;
 }
 
-
-//------------------------------------------------//
-//------------------TCP SERVER--------------------//
-//------------------------------------------------//
-
-void receiveFileTCP(char *host, unsigned int port)
+void get_file_tcp(char *host, unsigned int port)
 {
     struct sockaddr_in client_address;
 	
@@ -134,7 +132,7 @@ void receiveFileTCP(char *host, unsigned int port)
         }
 
         pthread_t th;
-        if (pthread_create(&th, NULL, TCP_Processing_thread, (void *) rsd)
+        if (pthread_create(&th, NULL, tcp_processing_thread, (void *) rsd)
             != 0) {
             cerr << "Creating thread error\n";
             exit(EXIT_FAILURE);
@@ -152,19 +150,19 @@ void receiveFileTCP(char *host, unsigned int port)
     }
 }
 
-void *TCP_Processing_thread(void *ptr)
+void *tcp_processing_thread(void *ptr)
 {
     int rsd = (intptr_t) ptr;
     char replyBuf[replyBufSize], buf[bufSize];
 
     // Receive file name and file size
-    if (ReceiveToBuf(rsd, replyBuf, sizeof(replyBuf)) <= 0) {
+    if (receive_to_buf(rsd, replyBuf, sizeof(replyBuf)) <= 0) {
         close(rsd);
         fprintf(stderr, "Error receiving file name and file size\n");
         return NULL;
     }
 
-    char *size = getFileSizePTR(replyBuf, sizeof(replyBuf));
+    char *size = get_file_size_pointer(replyBuf, sizeof(replyBuf));
     if (size == NULL) {
         close(rsd);
         fprintf(stderr, "Bad file size\n");
@@ -184,13 +182,13 @@ void *TCP_Processing_thread(void *ptr)
     }
     // Receiving file   
     int recvSize;
-    long totalBytesReceived = 0;
+    long total_bytes_received = 0;
 
     fd_set rset, xset;
     FD_ZERO(&rset);
     FD_ZERO(&xset);
 
-    while (totalBytesReceived < fileSize) {
+    while (total_bytes_received < fileSize) {
 
         FD_SET(rsd, &rset);
         select(rsd + 1, &rset, NULL, &xset, NULL);
@@ -198,7 +196,7 @@ void *TCP_Processing_thread(void *ptr)
         if (FD_ISSET(rsd, &xset)) {
             safe_print(&printMutex,
                        "Receive OOB byte. Total bytes of \"%s\" received: %ld\n",
-                       fileName, totalBytesReceived);
+                       fileName, total_bytes_received);
 
             char oobBuf;
             int n = recv(rsd, &oobBuf, 1, MSG_OOB);
@@ -211,7 +209,7 @@ void *TCP_Processing_thread(void *ptr)
             recvSize = recv(rsd, buf, sizeof(buf), 0);
 
             if (recvSize > 0) {
-                totalBytesReceived += recvSize;
+                total_bytes_received += recvSize;
                 fwrite(buf, 1, recvSize, file);
             } else if (recvSize == 0) {
                 safe_print(&printMutex, "Received EOF\n");
@@ -230,25 +228,20 @@ void *TCP_Processing_thread(void *ptr)
     fclose(file);
     safe_print(&printMutex,
                "Receiving file \"%s\" completed. %ld bytes received.\n",
-               fileName, totalBytesReceived);
+               fileName, total_bytes_received);
     close(rsd);
 
     return NULL;
 }
 
-
-//------------------------------------------------//
-//------------------UDP SERVER--------------------//
-//------------------------------------------------//
-
 struct fileInfo {
     FILE *file;
     char fileName[256];
-    long totalBytesReceived;
+    long total_bytes_received;
     long fileSize;
 };
 
-struct udpArg {
+struct udo_args {
     char buf[bufSize];
     int recvSize;
     struct sockaddr_in addr;
@@ -261,7 +254,7 @@ const unsigned char ACK = 1;
 map < uint64_t, fileInfo * >filesMap;
 pthread_mutex_t mapMutex;
 
-void receiveFileUDP(char *host, unsigned int port)
+void get_file_udp(char *host, unsigned int port)
 {
     struct sockaddr_in client_address;
 
@@ -318,7 +311,7 @@ void receiveFileUDP(char *host, unsigned int port)
                        sizeof(struct timeval));    // disable timeout
         pthread_mutex_unlock(&mapMutex);
 
-        struct udpArg *arg = new udpArg;        // argument for new thread      
+        struct udo_args *arg = new udo_args;        // argument for new thread      
 
         recvSize =
             recvfrom(UdpServerDescr, arg->buf, sizeof(arg->buf), 0,
@@ -331,7 +324,7 @@ void receiveFileUDP(char *host, unsigned int port)
         arg->recvSize = recvSize;
 
         pthread_t th;
-        if (pthread_create(&th, NULL, UDP_Processing_thread, (void *) arg)
+        if (pthread_create(&th, NULL, udp_processing_thread, (void *) arg)
             != 0) {
             fprintf(stderr, "Creating thread error\n");
             exit(EXIT_FAILURE);
@@ -349,14 +342,14 @@ void receiveFileUDP(char *host, unsigned int port)
 }
 
 
-void *UDP_Processing_thread(void *ptr)
+void *udp_processing_thread(void *ptr)
 {
-    struct udpArg *arg = (struct udpArg *) ptr;
+    struct udo_args *arg = (struct udo_args *) ptr;
 
     socklen_t rlen = sizeof(arg->addr);
 
     uint64_t address =
-        IpPortToNumber(arg->addr.sin_addr.s_addr, arg->addr.sin_port);
+        ip_port_to_number(arg->addr.sin_addr.s_addr, arg->addr.sin_port);
 
     pthread_mutex_lock(&mapMutex);
     map < uint64_t, fileInfo * >::iterator pos = filesMap.find(address);
@@ -365,7 +358,7 @@ void *UDP_Processing_thread(void *ptr)
     // client address not found in array
     if (pos == filesMap.end()) {
 
-        char *size = getFileSizePTR(arg->buf, sizeof(arg->buf));
+        char *size = get_file_size_pointer(arg->buf, sizeof(arg->buf));
         if (size == NULL) {
             fprintf(stderr, "Bad file size\n");
             return NULL;
@@ -393,11 +386,11 @@ void *UDP_Processing_thread(void *ptr)
 
     } else {
         struct fileInfo *info = pos->second;
-        info->totalBytesReceived += arg->recvSize;
+        info->total_bytes_received += arg->recvSize;
 
         fwrite(arg->buf, 1, arg->recvSize, info->file);
 
-        if (info->totalBytesReceived == info->fileSize) {
+        if (info->total_bytes_received == info->fileSize) {
             safe_print(&printMutex, "File \"%s\" received\n",
                        info->fileName);
             fclose(info->file);
@@ -441,4 +434,49 @@ FILE *create_file(char *file_name, const char *folder_name)
 void print_error(char* message, int error_code) {
     fprintf(stderr, message);
     exit(error_code);
+}
+
+char *get_file_size_pointer(char *str, int size)
+{
+    for (int i = 0; i < size; i++) {
+        if (str[i] == ':') {
+            str[i] = 0;
+            return &str[i + 1];
+        }
+    }
+    return NULL;
+}
+
+uint64_t ip_port_to_number(uint32_t IPv4, uint16_t port)
+{
+    return (((uint64_t) IPv4) << 16) | (uint64_t) port;
+}
+
+void safe_print(pthread_mutex_t* mutex, const char* message, ...)
+{        
+    va_list args;
+    va_start( args, message );
+
+        pthread_mutex_lock(mutex);
+    vprintf(message, args);
+        pthread_mutex_unlock(mutex);
+
+    va_end(args);        
+}
+
+int receive_to_buf(int descriptor, char *buf, int len)
+{
+    int recvSize = 0;
+    int number_of_bytes;
+    while (recvSize < len) {
+        number_of_bytes =
+            recv(descriptor, buf + recvSize, len - recvSize, 0);
+        if (number_of_bytes == 0)
+            break;
+        else if (number_of_bytes < 0)
+            return -1;
+        else
+            recvSize += number_of_bytes;
+    }
+    return recvSize;
 }
