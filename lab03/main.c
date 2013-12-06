@@ -13,6 +13,7 @@
 void send_file(char* host, int port, char* file_path);
 void print_error(char* message, int error_code);
 long get_file_size(FILE* file);
+void get_file(char host, int port);
 
 int client_socket_descriptor = -1;
 int server_socket_descriptor = -1;
@@ -29,30 +30,30 @@ int main(int argc, char* argv[])
 }
 
 void send_file(char* host, int port, char* file_path) {
-    struct sockaddr_in server_socket;
+    struct sockaddr_in server_address;
 
-    memset(&server_socket, 0, sizeof(server_socket));
-    server_socket.sin_family = AF_INET;
+    memset(&server_address, 0, sizeof(server_address));
+    server_address.sin_family = AF_INET;
 
     struct hostent* host_name = gethostbyname(host);
 
     if (host_name != NULL) {
-        memcpy(&server_socket.sin_addr, host_name->h_addr, host_name->h_length);
+        memcpy(&server_address.sin_addr, host_name->h_addr, host_name->h_length);
     } else {
-        print_error("Invalid host", 2);
+        print_error("Invalid server host", 2);
     }
 
-    server_socket.sin_port = htons(port);
+    server_address.sin_port = htons(port);
 
     struct protoent* protocol_type = getprotobyname("TCP");
-    client_socket_descriptor = socket(PF_INET, SOCK_STREAM, protocol_type->p_proto);
+    client_socket_descriptor = socket(AF_INET, SOCK_STREAM, protocol_type->p_proto);
 
     if (client_socket_descriptor < 0) {
-        print_error("Can't create socket", 3);
+        print_error("Can't create client socket", 3);
     }
 
-    if (connect(client_socket_descriptor, (struct sockaddr*) &server_socket,
-                sizeof(server_socket)) < 0) {
+    if (connect(client_socket_descriptor, (struct sockaddr*) &server_address,
+                sizeof(server_address)) < 0) {
         print_error("Error in connect", 4);
     }
 
@@ -89,6 +90,32 @@ void send_file(char* host, int port, char* file_path) {
 
     close(client_socket_descriptor);
     fclose(file);
+}
+
+void get_file(chat* host, int port) {
+	struct sockaddr_in client_address;
+	
+	memset(&server_address, 0, sizeof(client_address));
+    client_address.sin_family = AF_INET;
+
+    struct hostent* host_name = gethostbyname(host);
+
+    if (host_name != NULL) {
+        memcpy(&client_address.sin_addr, host_name->h_addr, host_name->h_length);
+    } else {
+        print_error("Invalid client host", 8);
+    }
+
+    client_address.sin_port = htons(port);
+
+    struct protoent* protocol_type = getprotobyname("TCP");
+    server_socket_descriptor = socket(AF_INET, SOCK_STREAM, protocol_type->p_proto);
+
+    if (server_socket_descriptor < 0) {
+        print_error("Can't create server socket", 3);
+    } 
+	
+
 }
 
 void print_error(char* message, int error_code) {
