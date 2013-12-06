@@ -29,20 +29,20 @@ extern "C" {
 
 using namespace std;
 
-void receiveFileTCP(char *serverName, unsigned int port);
-void receiveFileUDP(char *serverName, unsigned int port);
+void get_file_tcp(char *serverName, unsigned int port);
+void get_file_udp(char *serverName, unsigned int port);
 
-void TCP_Processing(int rsd);
-void UDP_Processing(unsigned char *buf, int size, struct sockaddr_in &addr);
-char *getFileSizePTR(char *str, int size);
+void tcp_Processing(int rsd);
+void udp_Processing(unsigned char *buf, int size, struct sockaddr_in &addr);
+char *get_file_size_pointer(char *str, int size);
 void print_error(char* message, int error_code);
-uint64_t IpPortToNumber(uint32_t IPv4, uint16_t port);
+uint64_t ip_port_to_number(uint32_t IPv4, uint16_t port);
 int receive_to_buf(int descriptor, char *buf, int len);
 FILE *create_file(char *file_name, const char *folder_name);
 
 int server_socket_descriptor = -1;
 
-void intHandler(int signo)
+void interrupt(int signo)
 {
     if (server_socket_descriptor != -1)
         close(server_socket_descriptor);
@@ -57,21 +57,21 @@ int main(int argc, char *argv[])
         return 1;
     }
     
-    struct sigaction intSignal;
-    intSignal.sa_handler = intHandler;
-    sigaction(SIGINT, &intSignal, NULL);
+    struct sigaction signal_int;
+    signal_int.sa_handler = interrupt;
+    sigaction(SIGINT, &signal_int, NULL);
 
     signal(SIGCHLD, SIG_IGN);   // make SIGCHLD ignored to avoid zombies
 
     if (argc == 3)
-        receiveFileTCP(argv[1], atoi(argv[2]));
+        get_file_tcp(argv[1], atoi(argv[2]));
     else
-        receiveFileUDP(argv[1], atoi(argv[2]));
+        get_file_udp(argv[1], atoi(argv[2]));
 
     return 0;
 }
 
-void receiveFileTCP(char *host, unsigned int port)
+void get_file_tcp(char *host, unsigned int port)
 {
     struct sockaddr_in client_address;
 
@@ -124,7 +124,7 @@ void receiveFileTCP(char *host, unsigned int port)
             exit(EXIT_FAILURE);
 
         case 0:                // child process
-            TCP_Processing(rsd);
+            tcp_Processing(rsd);
             return;
 
         default:               // parrent process
@@ -134,7 +134,7 @@ void receiveFileTCP(char *host, unsigned int port)
     }
 }
 
-void TCP_Processing(int rsd)
+void tcp_Processing(int rsd)
 {
     char replyBuf[replyBufSize], buf[bufSize];
 
@@ -145,7 +145,7 @@ void TCP_Processing(int rsd)
         return;
     }
 
-    char *size = getFileSizePTR(replyBuf, sizeof(replyBuf));
+    char *size = get_file_size_pointer(replyBuf, sizeof(replyBuf));
     if (size == NULL) {
         close(rsd);
         fprintf(stderr, "Bad file size\n");
@@ -221,7 +221,7 @@ struct fileInfo {
 };
 
 
-int UdpServerDescr = -1;
+int server_socket_descriptor_udp = -1;
 
 const unsigned char ACK = 1;
 const unsigned char END = 2;
@@ -229,11 +229,9 @@ const unsigned char END = 2;
 map < uint64_t, fileInfo * >filesMap;
 
 
-void receiveFileUDP(char *host, unsigned int port)
+void get_file_udp(char *host, unsigned int port)
 {
     struct sockaddr_in client_address;
-
-    int server_socket_descriptor_udp;
 	
 	memset(&client_address, 0, sizeof(client_address));
 	client_address.sin_family = AF_INET;
@@ -266,32 +264,32 @@ void receiveFileUDP(char *host, unsigned int port)
 
     while (1) {
         if (filesMap.size() > 1)
-            setsockopt(UdpServerDescr, SOL_SOCKET, SO_RCVTIMEO, &timeOut, sizeof(struct timeval));      // set timeout
+            setsockopt(server_socket_descriptor_udp, SOL_SOCKET, SO_RCVTIMEO, &timeOut, sizeof(struct timeval));      // set timeout
         else
-            setsockopt(UdpServerDescr, SOL_SOCKET, SO_RCVTIMEO, &noTimeOut, sizeof(struct timeval));    // disable timeout
+            setsockopt(server_socket_descriptor_udp, SOL_SOCKET, SO_RCVTIMEO, &noTimeOut, sizeof(struct timeval));    // disable timeout
 
         unsigned char buf[bufSize];
 
         recvSize =
-            recvfrom(UdpServerDescr, buf, sizeof(buf), 0,
+            recvfrom(server_socket_descriptor_udp, buf, sizeof(buf), 0,
                      (struct sockaddr *) &addr, &rlen);
         if (recvSize < 0) {
             perror("recvfrom()");
             exit(EXIT_FAILURE);
         }
 
-        UDP_Processing(buf, recvSize, addr);
+        udp_Processing(buf, recvSize, addr);
     }
 }
 
 
-void UDP_Processing(unsigned char *buf, int recvSize, struct sockaddr_in &addr)
+void udp_Processing(unsigned char *buf, int recvSize, struct sockaddr_in &addr)
 {
     socklen_t rlen = sizeof(addr);
     int bytesTransmitted;
 
     uint64_t address =
-        IpPortToNumber(addr.sin_addr.s_addr, addr.sin_port);
+        ip_port_to_number(addr.sin_addr.s_addr, addr.sin_port);
 
     map < uint64_t, fileInfo * >::iterator pos =
         filesMap.find(address);
@@ -299,7 +297,7 @@ void UDP_Processing(unsigned char *buf, int recvSize, struct sockaddr_in &addr)
     // client address not found in array
     if (pos == filesMap.end()) {
 
-        char *fileSizeStr = getFileSizePTR((char *) buf, recvSize);
+        char *fileSizeStr = get_file_size_pointer((char *) buf, recvSize);
         if (fileSizeStr == NULL) {
             fprintf(stderr, "Bad file size\n");
             return;
@@ -323,7 +321,7 @@ void UDP_Processing(unsigned char *buf, int recvSize, struct sockaddr_in &addr)
         filesMap[address] = info;
 
 
-        bytesTransmitted = sendto(UdpServerDescr, &ACK, sizeof(ACK), 0,
+        bytesTransmitted = sendto(server_socket_descriptor_udp, &ACK, sizeof(ACK), 0,
                                   (struct sockaddr *) &(addr), rlen);
         if (bytesTransmitted < 0) {
             perror("send");
@@ -355,7 +353,7 @@ void UDP_Processing(unsigned char *buf, int recvSize, struct sockaddr_in &addr)
                 }
 
                 bytesTransmitted =
-                    sendto(UdpServerDescr, &ACK, sizeof(ACK), 0,
+                    sendto(server_socket_descriptor_udp, &ACK, sizeof(ACK), 0,
                            (struct sockaddr *) &(addr), rlen);
                 if (bytesTransmitted < 0) {
                     perror("send");
@@ -372,7 +370,7 @@ void UDP_Processing(unsigned char *buf, int recvSize, struct sockaddr_in &addr)
     return;
 }
 
-char *getFileSizePTR(char *str, int size)
+char *get_file_size_pointer(char *str, int size)
 {
     for (int i = 0; i < size; i++) {
         if (str[i] == ':') {
@@ -388,7 +386,7 @@ void print_error(char* message, int error_code) {
     exit(error_code);
 }
 
-uint64_t IpPortToNumber(uint32_t IPv4, uint16_t port)
+uint64_t ip_port_to_number(uint32_t IPv4, uint16_t port)
 {
     return (((uint64_t) IPv4) << 16) | (uint64_t) port;
 }
