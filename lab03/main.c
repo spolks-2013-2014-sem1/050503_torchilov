@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <libgen.h>
 #include <bits/sigaction.h>
+#include <sys/time.h>
 
 #define BUFFER_SIZE 2048
 #define ADDITIONAL_BUFFER_SIZE 256
@@ -21,6 +22,7 @@ void print_error(char* message, int error_code);
 long get_file_size(FILE* file);
 void get_file(char* host, int port);
 void intterrupt(int signo);
+FILE *create_file(char *file_name, const char *folder_name);
 
 int client_socket_descriptor = -1;
 int server_socket_descriptor = -1;
@@ -80,11 +82,22 @@ void send_file(char* host, int port, char* file_path) {
 
     long file_size = get_file_size(file);
     char header_buffer[256];
+	
+	fd_set server_fds;
+	FD_ZERO(&server_fds);
+    FD_SET(client_socket_descriptor, &server_fds);
+	
+	struct timespec timeout;
+	timeout.tv_sec = 10;
+    timeout.tv_nsec = 0;
+	int temp = 1;
 
     sprintf(header_buffer, "%s:%ld", basename(file_path), file_size);
+		
+	
     if (send(client_socket_descriptor, header_buffer, sizeof(header_buffer), 0) == -1) {
         print_error("Send header error", 6);
-    }
+    }	
 
     char buffer[BUFFER_SIZE];
     long number_of_send_bytes = 0;
@@ -92,7 +105,14 @@ void send_file(char* host, int port, char* file_path) {
 
     while (number_of_send_bytes < file_size) {
         number_of_read_bytes = fread(buffer, 1, sizeof(buffer), file);
-
+		
+		temp = pselect(client_socket_descriptor + 1, NULL, &server_fds, NULL, &timeout, NULL);
+		if (temp == 0 || temp == -1){
+			close(client_socket_descriptor);
+			fclose(file);
+			print_error("Connection terminated\n", 666);
+		}
+		
         int temp_send = send(client_socket_descriptor, buffer, number_of_read_bytes, 0);
 
         if (temp_send < 0) {
@@ -110,7 +130,7 @@ void send_file(char* host, int port, char* file_path) {
 void get_file(char* host, int port) {
 	struct sockaddr_in client_address;
 	
-	memset(&server_address, 0, sizeof(client_address));
+	memset(&client_address, 0, sizeof(client_address));
     client_address.sin_family = AF_INET;
 
     struct hostent* host_name = gethostbyname(host);
@@ -133,11 +153,11 @@ void get_file(char* host, int port) {
 	int bool_option = 1;
 	
 	if (setsockopt(server_socket_descriptor, 
-		SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(int)) == -1) {
-		print_error("Can't set reuse address socket option", 10)
+		SOL_SOCKET, SO_REUSEADDR, &bool_option, sizeof(int)) == -1) {
+		print_error("Can't set reuse address socket option", 10);
 	}
 	
-	if (bind(server_socket_descriptor, (struct sockaddr *) client_address, sizeof(*client_address)) < 0) {
+	if (bind(server_socket_descriptor, (struct sockaddr*) &client_address, sizeof(client_address)) < 0) {
 		print_error("Can't bind socket", 11);
 	}
 	
@@ -148,7 +168,7 @@ void get_file(char* host, int port) {
 	char header_buffer[ADDITIONAL_BUFFER_SIZE], buffer[BUFFER_SIZE];
 	
 	while (1) {
-		printf("Server started\n");
+		printf("\nServer waiting\n");
 		
 		int descriptor = accept(server_socket_descriptor, NULL, NULL);
 		
@@ -157,6 +177,13 @@ void get_file(char* host, int port) {
 			printf("Error in sending header\n");
 			continue;
 		}
+		
+		char *file_name = strtok(header_buffer, ":");
+        if (file_name == NULL) {
+            close(descriptor);
+            printf("Error in file name\n");
+            continue;
+        }
 		
 		char *size = strtok(NULL, ":");
 		
@@ -168,22 +195,40 @@ void get_file(char* host, int port) {
 		
 		long file_size = atoi(size);
 		
-		FILE *file = CreateReceiveFile(fileName, "Received_files");
+		FILE *file = create_file(file_name, "temp_folder");
 		
 		if (file == NULL) {
 			print_error("Error in creating file", 11);
 		}
+		
+		fd_set server_fds;
+		FD_ZERO(&server_fds);
+		FD_SET(descriptor, &server_fds);
+	
+		struct timespec timeout;
+		timeout.tv_sec = 10;
+		timeout.tv_nsec = 0;
+		int temp = 1;
+		
 		
 		long get_length = 0;
 		int read_length;
 		
 		while (1) {
 			read_length = recv(descriptor, buffer, sizeof(buffer), 0);
+			
+			temp = pselect(descriptor + 1, NULL, &server_fds, NULL, &timeout, NULL);
+			
+			if (temp == 0 || temp == -1){
+				close(descriptor);
+				fclose(file);
+				print_error("Connection terminated\n", 666);
+			}
+			
 			if (read_length == 0) {
-				printf("EOF\n");
 				break;
 			} else if (read_length > 0) {
-				fwrite(buf, 1, read_length, file);
+				fwrite(buffer, 1, read_length, file);
                 get_length += read_length;
 			} else {
 				printf("Unknown error");
@@ -191,7 +236,7 @@ void get_file(char* host, int port) {
 			}			
 		}
 		fclose(file);
-		printf("File obtained: %id", get_length);
+		printf("File obtained: %ld", get_length);
 		close(descriptor);
 	}
 }
@@ -217,8 +262,25 @@ int save_data_to_buffer(int descriptor, char* buffer, int length) {
 	int get_length = 0;
 	int read_length;
 	
+	fd_set server_fds;
+	FD_ZERO(&server_fds);
+	FD_SET(descriptor, &server_fds);
+	
+	struct timespec timeout;
+	timeout.tv_sec = 10;
+	timeout.tv_nsec = 0;
+	int temp = 1;
+	
 	while (get_length < length) {
 		read_length = recv(descriptor, buffer + get_length, length - get_length, 0);
+		
+		temp = pselect(descriptor + 1, NULL, &server_fds, NULL, &timeout, NULL);
+			
+		if (temp == 0 || temp == -1){
+			close(descriptor);
+			print_error("Connection terminated\n", 666);
+		}
+		
 		if (read_length == 0) {
 			break;
 		} else if (read_length < 0) {
@@ -231,32 +293,22 @@ int save_data_to_buffer(int descriptor, char* buffer, int length) {
 	return get_length;
 }
 
-FILE *CreateReceiveFile(char *fileName, const char *folderName)
+FILE *create_file(char *file_name, const char *folder_name)
 {
-    char filePath[4096];
+    char file_path[4096];
 
-    // Create folder for received files if not exist
     struct stat st = { 0 };
-    if (stat(folderName, &st) == -1) {
-        if (mkdir(folderName, 0777) == -1)
+    if (stat(folder_name, &st) == -1) {
+        if (mkdir(folder_name, 0777) == -1) {
             return NULL;
+		}
     }
 
-    strcpy(filePath, folderName);
-    strcat(filePath, "/");
-    strcat(filePath, fileName);
+    strcpy(file_path, folder_name);
+    strcat(file_path, "/");
+    strcat(file_path, file_name);
 
-    if (access(filePath, F_OK) != -1) {     // if file exists
-        
-        char time_buf[30];
-        time_t now;
-        time(&now);
-        strftime(time_buf, sizeof(time_buf), "_%Y-%m-%d_%H-%M-%S", localtime(&now));
-        
-        strcat(filePath, time_buf);
-    }
-
-    return fopen(filePath, "wb");
+    return fopen(file_path, "wb");
 }
 
 void intterrupt(int signo)
@@ -267,3 +319,4 @@ void intterrupt(int signo)
         close(client_socket_descriptor);
     _exit(0);
 }
+
