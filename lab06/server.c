@@ -67,18 +67,18 @@ void intterrupt(int signo)
 int main(int argc, char *argv[])
 {
     if (argc < 3 || argc > 4) {
-        cerr << "usage: main <host> <port> [-u]\n";
+        cerr << "usage: main [-u] <host> <port> \n";
         return 1;
     }
 
-    struct sigaction intSignal;
-    intSignal.sa_handler = intterrupt;
-    sigaction(SIGINT, &intSignal, NULL);
+    struct sigaction signal;
+    signal.sa_handler = intterrupt;
+    sigaction(SIGINT, &signal, NULL);
 
     if (argc == 3)
         get_file_tcp(argv[1], atoi(argv[2]));
     else
-        get_file_udp(argv[1], atoi(argv[2]));
+        get_file_udp(argv[2], atoi(argv[3]));
 
     return 0;
 }
