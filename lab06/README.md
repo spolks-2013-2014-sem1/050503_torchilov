@@ -8,7 +8,7 @@
 
 1. Сомпилировать client.c с помощью gcc (с параметром -std=c99):
     gcc client.c -std=c99 -o client
-2. Сомпилировать server.c с помощью gcc (с параметром -std=c99):
+2. Сомпилировать server.c с помощью g++ (с параметром -std=c++0x):
     g++ server.c -std=c++0x -o server
 2. Для запуска программы в режиме сервера:
     ./server <-u> host port
