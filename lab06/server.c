@@ -197,7 +197,7 @@ int tcp_processing(int descr, map < int, fileInfo * >&filesMap)
         cout << "File size: " << fileSize << ", file name: "
             << fileName << "\n";
 
-        FILE *file = create_file(fileName, "Received_files");
+        FILE *file = create_file(fileName, "temp_folder");
         if (file == NULL) {
             perror("Create file error");
             exit(EXIT_FAILURE);
@@ -357,7 +357,7 @@ void udp_processing(int server_socket_descriptor_udp, map <uint64_t, fileInfo*> 
         cout << "File size: " << fileSize << ", file name: "
             << fileName << "\n";
 
-        FILE *file = create_file(fileName, "Received_files");
+        FILE *file = create_file(fileName, "temp_folder");
         if (file == NULL) {
             perror("Create file error");
             exit(EXIT_FAILURE);
