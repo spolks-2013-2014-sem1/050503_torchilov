@@ -2,9 +2,6 @@
 extern "C" {
 #endif
 
-#include "../spolks_lib/utils.c"
-#include "../spolks_lib/sockets.c"
-
 #include <sys/types.h>
 #include <signal.h>
 #include <sys/stat.h>
@@ -42,7 +39,7 @@ struct fileInfo {
     long fileSize;
 };
 
-
+uint64_t ip_port_to_number(uint32_t IPv4, uint16_t port);
 void get_file_tcp(char *serverName, unsigned int port);
 void get_file_udp(char *serverName, unsigned int port);
 int tcp_processing(int descr, map < int, fileInfo * >&filesMap);
@@ -337,7 +334,7 @@ void udp_processing(int server_socket_descriptor_udp, map <uint64_t, fileInfo*> 
         exit(EXIT_FAILURE);
     }
 
-    uint64_t address = IpPortToNumber(addr.sin_addr.s_addr, addr.sin_port);
+    uint64_t address = ip_port_to_number(addr.sin_addr.s_addr, addr.sin_port);
 
     map < uint64_t, fileInfo * >::iterator pos = filesMap.find(address);
 
@@ -407,3 +404,8 @@ void print_error(char* message, int error_code) {
     fprintf(stderr, message);
     exit(error_code);
 }
+uint64_t ip_port_to_number(uint32_t IPv4, uint16_t port)
+{
+    return (((uint64_t) IPv4) << 16) | (uint64_t) port;
+}
+
