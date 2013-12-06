@@ -6,14 +6,21 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <netdb.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <libgen.h>
+#include <bits/sigaction.h>
 
 #define BUFFER_SIZE 2048
 #define ADDITIONAL_BUFFER_SIZE 256
+#define MAX_LENGTH 10
+#define h_addr h_addr_list[0]
 
 void send_file(char* host, int port, char* file_path);
 void print_error(char* message, int error_code);
 long get_file_size(FILE* file);
-void get_file(char host, int port);
+void get_file(char* host, int port);
+void intterrupt(int signo);
 
 int client_socket_descriptor = -1;
 int server_socket_descriptor = -1;
@@ -23,9 +30,17 @@ int main(int argc, char* argv[])
     if (argc < 3 || argc > 4) {
         print_error("Invalid params.\nUsage: [hostname] [port] <file path>", 1);
     }
+	
+	struct sigaction signal;
+    signal.sa_handler = intterrupt;
+    sigaction(SIGINT, &signal, NULL);
 
-
-
+    if (argc == 3) {
+        get_file(argv[1], atoi(argv[2]));
+	} else {
+        send_file(argv[1], atoi(argv[2]), argv[3]);
+	}
+	
     return 0;
 }
 
@@ -92,7 +107,7 @@ void send_file(char* host, int port, char* file_path) {
     fclose(file);
 }
 
-void get_file(chat* host, int port) {
+void get_file(char* host, int port) {
 	struct sockaddr_in client_address;
 	
 	memset(&server_address, 0, sizeof(client_address));
@@ -112,10 +127,73 @@ void get_file(chat* host, int port) {
     server_socket_descriptor = socket(AF_INET, SOCK_STREAM, protocol_type->p_proto);
 
     if (server_socket_descriptor < 0) {
-        print_error("Can't create server socket", 3);
+        print_error("Can't create server socket", 9);
     } 
 	
-
+	int bool_option = 1;
+	
+	if (setsockopt(server_socket_descriptor, 
+		SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(int)) == -1) {
+		print_error("Can't set reuse address socket option", 10)
+	}
+	
+	if (bind(server_socket_descriptor, (struct sockaddr *) client_address, sizeof(*client_address)) < 0) {
+		print_error("Can't bind socket", 11);
+	}
+	
+	if (listen(server_socket_descriptor, MAX_LENGTH) == -1) {
+		print_error("Listen socket error", 12);
+	}
+	
+	char header_buffer[ADDITIONAL_BUFFER_SIZE], buffer[BUFFER_SIZE];
+	
+	while (1) {
+		printf("Server started\n");
+		
+		int descriptor = accept(server_socket_descriptor, NULL, NULL);
+		
+		if (save_data_to_buffer(descriptor, header_buffer, sizeof(header_buffer)) <= 0) {
+			close(descriptor);
+			printf("Error in sending header\n");
+			continue;
+		}
+		
+		char *size = strtok(NULL, ":");
+		
+		if (size == NULL) {
+			close(descriptor);
+			printf("Error in file size\n");
+			continue;
+		}
+		
+		long file_size = atoi(size);
+		
+		FILE *file = CreateReceiveFile(fileName, "Received_files");
+		
+		if (file == NULL) {
+			print_error("Error in creating file", 11);
+		}
+		
+		long get_length = 0;
+		int read_length;
+		
+		while (1) {
+			read_length = recv(descriptor, buffer, sizeof(buffer), 0);
+			if (read_length == 0) {
+				printf("EOF\n");
+				break;
+			} else if (read_length > 0) {
+				fwrite(buf, 1, read_length, file);
+                get_length += read_length;
+			} else {
+				printf("Unknown error");
+				break;
+			}			
+		}
+		fclose(file);
+		printf("File obtained: %id", get_length);
+		close(descriptor);
+	}
 }
 
 void print_error(char* message, int error_code) {
@@ -133,4 +211,59 @@ long get_file_size(FILE* file) {
     fseek(file, current_position, SEEK_SET);
 
     return full_size;
+}
+
+int save_data_to_buffer(int descriptor, char* buffer, int length) {
+	int get_length = 0;
+	int read_length;
+	
+	while (get_length < length) {
+		read_length = recv(descriptor, buffer + get_length, length - get_length, 0);
+		if (read_length == 0) {
+			break;
+		} else if (read_length < 0) {
+			return -1;
+		} else {
+			get_length += read_length;
+		}
+	}
+	
+	return get_length;
+}
+
+FILE *CreateReceiveFile(char *fileName, const char *folderName)
+{
+    char filePath[4096];
+
+    // Create folder for received files if not exist
+    struct stat st = { 0 };
+    if (stat(folderName, &st) == -1) {
+        if (mkdir(folderName, 0777) == -1)
+            return NULL;
+    }
+
+    strcpy(filePath, folderName);
+    strcat(filePath, "/");
+    strcat(filePath, fileName);
+
+    if (access(filePath, F_OK) != -1) {     // if file exists
+        
+        char time_buf[30];
+        time_t now;
+        time(&now);
+        strftime(time_buf, sizeof(time_buf), "_%Y-%m-%d_%H-%M-%S", localtime(&now));
+        
+        strcat(filePath, time_buf);
+    }
+
+    return fopen(filePath, "wb");
+}
+
+void intterrupt(int signo)
+{
+    if (server_socket_descriptor != -1)
+        close(server_socket_descriptor);
+    else
+        close(client_socket_descriptor);
+    _exit(0);
 }
