@@ -40,9 +40,9 @@ int main(int argc, char *argv[])
     sigaction(SIGINT, &signal, NULL);
 
     if (argc == 4) {
-        send_file_tcp(argv[2], atoi(argv[3]), argv[4]);
+        send_file_tcp(argv[1], atoi(argv[2]), argv[3]);
 	} else {
-        send_file_udp(argv[1], atoi(argv[2]), argv[3]);
+        send_file_udp(argv[2], atoi(argv[3]), argv[4]);
 	}
 
     return 0;

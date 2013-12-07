@@ -47,9 +47,9 @@ int main(int argc, char *argv[])
     sigaction(SIGINT, &signal, NULL);
 
     if (argc == 3) {
-        get_file_tcp(argv[2], atoi(argv[3]));
+        get_file_tcp(argv[1], atoi(argv[2]));
 	} else {
-        get_file_udp(argv[1], atoi(argv[2]));
+        get_file_udp(argv[2], atoi(argv[3]));
 	}
 	
     return 0;
