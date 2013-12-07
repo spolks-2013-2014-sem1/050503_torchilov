@@ -24,16 +24,147 @@
 #define h_addr h_addr_list[0]
 
 void print_error(char* message, int error_code);
-void get_file(char* host, int port);
+void get_file_tcp(char* host, int port);
+void get_file_udp(char* host, int port);
 void intterrupt(int signo);
 FILE *create_file(char *file_name, const char *folder_name);
 void urg_handler(int signo);
 
 int server_socket_descriptor = -1;
+const unsigned char ACK = 1;
 
 int oob_flag = 0;
 
-void get_file(char* host, int port) {
+int main(int argc, char *argv[])
+{
+    if (argc < 3 || argc > 4) {
+        print_error("Invalid params.\nUsage: [-u] [hostname] [port] ", 1);
+		return 1;
+    }
+	
+	struct sigaction signal;
+    signal.sa_handler = intterrupt;
+    sigaction(SIGINT, &signal, NULL);
+
+    if (argc == 3) {
+        get_file_tcp(argv[2], atoi(argv[3]));
+	} else {
+        get_file_udp(argv[1], atoi(argv[2]));
+	}
+	
+    return 0;
+}
+
+
+void get_file_udp(char* host, int port) {
+	struct sockaddr_in client_address;
+	int server_socket_descriptor_udp;
+	
+	memset(&client_address, 0, sizeof(client_address));
+	client_address.sin_family = AF_INET;
+	
+	struct hostent* host_name = gethostbyname(host);
+	
+	if (host_name != NULL) {
+		memcpy(&client_address.sin_addr, host_name->h_addr, host_name->h_length);
+	} else {
+		print_error("Invalid server host in udp", 13);
+	}
+	
+	client_address.sin_port = htons(port);
+	
+	struct protoent* protocol_type = getprotobyname("UDP");
+	server_socket_descriptor_udp = socket(AF_INET, SOCK_DGRAM, protocol_type->p_proto);
+	if (server_socket_descriptor_udp < 0) {
+		print_error("Error in creating socket udp\n", 14);
+	}
+	
+	if (bind(server_socket_descriptor_udp, (struct sockaddr*) &client_address, sizeof(client_address)) < 0) {
+		print_error("Can't bind socket in udp", 20);
+	}
+	
+	
+    struct timeval timeOut, noTimeOut;
+    timeOut.tv_sec = 30;   
+    timeOut.tv_usec = 0;
+    noTimeOut.tv_sec = 0;
+    noTimeOut.tv_usec = 0;
+	
+	struct sockaddr_in remote;
+    socklen_t remote_len = sizeof(remote);
+    char header_buffer[256], buf[BUFFER_SIZE];
+    int bytes_transmitted;
+
+    while (1) {
+        setsockopt(server_socket_descriptor_udp, SOL_SOCKET, SO_RCVTIMEO, (char *) &noTimeOut, sizeof(struct timeval));       // disable timeout
+        printf("\nUDP server waiting\n");
+
+        bytes_transmitted =
+            recvfrom(server_socket_descriptor_udp, header_buffer, sizeof(header_buffer), 0,
+                     (struct sockaddr *) &remote, &remote_len);
+
+        if (bytes_transmitted < 0) {
+            perror("Receive");
+            continue;
+        }
+
+        char *file_name = strtok(header_buffer, ":");
+        if (file_name == NULL) {
+            fprintf(stderr, "Bad file name\n");
+            continue;
+        }
+        char *size = strtok(NULL, ":");
+        if (size == NULL) {
+            fprintf(stderr, "Bad file size\n");
+            continue;
+        }
+        long file_size = atoi(size);
+        printf("File size: %ld, file name: %s\n", file_size, file_name);
+
+        FILE *file = create_file(file_name, "temp_folder");
+        if (file == NULL) {
+            perror("Create file error");
+            exit(EXIT_FAILURE);
+        }
+
+        bytes_transmitted =
+            sendto(server_socket_descriptor_udp, &ACK, sizeof(ACK), 0,
+                   (struct sockaddr *) &remote, remote_len);
+        if (bytes_transmitted < 0) {
+            perror("send");
+            continue;
+        }
+        
+        long total_bytes_received = 0;
+
+        setsockopt(server_socket_descriptor_udp, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeOut, sizeof(struct timeval));
+
+        while (total_bytes_received < file_size) {
+            bytes_transmitted =
+                recvfrom(server_socket_descriptor_udp, buf, sizeof(buf), 0,
+                         (struct sockaddr *) &remote, &remote_len);
+            if (bytes_transmitted > 0) {
+                total_bytes_received += bytes_transmitted;
+                fwrite(buf, 1, bytes_transmitted, file);
+
+                bytes_transmitted =
+                    sendto(server_socket_descriptor_udp, &ACK, sizeof(ACK), 0,
+                           (struct sockaddr *) &remote, remote_len);
+                if (bytes_transmitted < 0) {
+                    print_error("Error in sending udp", 25);
+                }
+            } else {
+                perror("receive error");
+                break;
+            }
+        }
+        printf("Receiving file completed. %ld bytes received.\n",
+               total_bytes_received);
+        fclose(file);
+	}
+}
+
+void get_file_tcp(char* host, int port) {
 	struct sockaddr_in client_address;
 	
 	memset(&client_address, 0, sizeof(client_address));
@@ -74,7 +205,7 @@ void get_file(char* host, int port) {
 	char header_buffer[ADDITIONAL_BUFFER_SIZE], buffer[BUFFER_SIZE];
 	
 	while (1) {
-		printf("\nServer waiting\n");
+		printf("\nTCP server waiting\n");
 		
 		int descriptor = accept(server_socket_descriptor, NULL, NULL);
 		
@@ -83,7 +214,7 @@ void get_file(char* host, int port) {
         sigaction(SIGURG, &urg_signal, NULL);
 
         if (fcntl(descriptor, F_SETOWN, getpid()) < 0) {
-            print_error("fcntl", 21)
+            print_error("fcntl", 21);
         }
 		
 		if (save_data_to_buffer(descriptor, header_buffer, sizeof(header_buffer)) <= 0) {
@@ -229,10 +360,10 @@ FILE *create_file(char *file_name, const char *folder_name)
 
 void intterrupt(int signo)
 {
-    if (server_socket_descriptor != -1)
-        close(server_socket_descriptor);
-    else
-        close(client_socket_descriptor);
+	if (server_socket_descriptor != -1) {
+		close(server_socket_descriptor);
+	}
+    
     _exit(0);
 }
 
