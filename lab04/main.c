@@ -40,6 +40,7 @@ int main(int argc, char* argv[])
 {
     if (argc < 3 || argc > 4) {
         print_error("Invalid params.\nUsage: [hostname] [port] <file path>", 1);
+	return 1;
     }
 	
 	struct sigaction signal;
