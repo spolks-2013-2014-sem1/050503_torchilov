@@ -29,12 +29,12 @@ long get_file_size(FILE* file);
 void get_file(char* host, int port);
 void intterrupt(int signo);
 FILE *create_file(char *file_name, const char *folder_name);
-void urgHandler(int signo);
+void urg_handler(int signo);
 
 int client_socket_descriptor = -1;
 int server_socket_descriptor = -1;
 
-int oobFlag = 0;
+int oob_flag = 0;
 
 int main(int argc, char* argv[])
 {
@@ -141,8 +141,7 @@ void send_file(char* host, int port, char* file_path) {
             printf("Sent OOB byte. Total bytes sent: %ld\n",   number_of_send_bytes);
             temp_send = send(client_socket_descriptor, "!", 1, MSG_OOB);
             if (temp_send < 0) {
-                perror("Sending error");
-                exit(EXIT_FAILURE);
+                print_error("Sending_error", 22);
             }
         }		
     }
@@ -199,13 +198,12 @@ void get_file(char* host, int port) {
 		
 		int descriptor = accept(server_socket_descriptor, NULL, NULL);
 		
-		struct sigaction urgSignal;
-        urgSignal.sa_handler = urgHandler;
-        sigaction(SIGURG, &urgSignal, NULL);
+		struct sigaction urg_signal;
+        urg_signal.sa_handler = urg_handler;
+        sigaction(SIGURG, &urg_signal, NULL);
 
         if (fcntl(descriptor, F_SETOWN, getpid()) < 0) {
-            perror("fcntl()");
-            exit(-1);
+            print_error("fcntl", 21);
         }
 		
 		if (save_data_to_buffer(descriptor, header_buffer, sizeof(header_buffer)) <= 0) {
@@ -251,7 +249,7 @@ void get_file(char* host, int port) {
 		int read_length;
 		
 		while (1) {
-			if (sockatmark(descriptor) == 1 && oobFlag == 1) {
+			if (sockatmark(descriptor) == 1 && oob_flag == 1) {
                 printf("Receive OOB byte. Total bytes received: %ld\n", get_length);
 
                 char oobBuf;
@@ -260,7 +258,7 @@ void get_file(char* host, int port) {
                 if (n == -1) {
 					fprintf(stderr, "receive OOB error\n");
 				}
-                oobFlag = 0;
+                oob_flag = 0;
             }	
 		
 			read_length = recv(descriptor, buffer, sizeof(buffer), 0);
@@ -371,8 +369,8 @@ void intterrupt(int signo)
 }
 
 
-void urgHandler(int signo)
+void urg_handler(int signo)
 {
-    oobFlag = 1;
+    oob_flag = 1;
 }
 
